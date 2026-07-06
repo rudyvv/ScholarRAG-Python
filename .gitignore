@@ -1,0 +1,45 @@
+# Python-generated files
+__pycache__/
+*.py[oc]
+build/
+dist/
+wheels/
+*.egg-info
+*.egg
+
+# Virtual environments
+.venv
+backend/.venv
+
+# Ruff & mypy cache
+.ruff_cache/
+.mypy_cache/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+Thumbs.db
+.DS_Store
+
+# Frontend
+frontend/node_modules/
+frontend/dist/
+
+# Docker volumes (runtime data)
+volumes/
+
+# Logs
+*.log
+logs/
+
+# Agent tooling runtime
+.omo/
+.reasonix/
+.codegraph/
+
+# Environment
+.env

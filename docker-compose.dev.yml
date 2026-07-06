@@ -1,0 +1,37 @@
+# =============================================================================
+# Paismart RAG - Development Override
+# =============================================================================
+# Exposes infrastructure ports to the host for local development.
+#
+# Usage:
+#   docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d
+# =============================================================================
+
+version: "3.8"
+
+services:
+  mysql:
+    ports:
+      - "${MYSQL_PORT:-3306}:3306"
+
+  redis:
+    ports:
+      - "${REDIS_PORT:-6379}:6379"
+
+  minio:
+    ports:
+      - "${MINIO_API_PORT:-19000}:9000"
+      - "${MINIO_CONSOLE_PORT:-19001}:19001"
+
+  elasticsearch:
+    ports:
+      - "${ELASTICSEARCH_PORT:-9200}:9200"
+
+  rabbitmq:
+    ports:
+      - "${RABBITMQ_PORT:-5672}:5672"
+      - "${RABBITMQ_MANAGEMENT_PORT:-15672}:15672"
+
+  milvus:
+    ports:
+      - "${MILVUS_PORT:-19530}:19530"

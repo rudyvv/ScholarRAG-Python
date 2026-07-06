@@ -1,0 +1,235 @@
+# =============================================================================
+# Paismart RAG - Infrastructure Services
+# =============================================================================
+# Docker Compose for all backing services: MySQL, Redis, MinIO,
+# Elasticsearch (with IK Chinese analyzer), RabbitMQ, and Milvus.
+#
+# Usage:
+#   docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d
+# =============================================================================
+
+version: "3.8"
+
+networks:
+  paismart-net:
+    name: paismart-net
+    driver: bridge
+
+volumes:
+  mysql_data:
+    name: paismart-mysql-data
+  redis_data:
+    name: paismart-redis-data
+  minio_data:
+    name: paismart-minio-data
+  es_data:
+    name: paismart-es-data
+  rabbitmq_data:
+    name: paismart-rabbitmq-data
+  milvus_data:
+    name: paismart-milvus-data
+
+services:
+  # ---------------------------------------------------------------------------
+  # MySQL 8.0 - Primary relational database
+  # ---------------------------------------------------------------------------
+  mysql:
+    image: mysql:8.0.41
+    container_name: paismart-mysql
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:?err}
+      MYSQL_DATABASE: ${MYSQL_DATABASE:-paismart}
+      MYSQL_USER: ${MYSQL_USER:-paismart}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:?err}
+    volumes:
+      - mysql_data:/var/lib/mysql
+    networks:
+      - paismart-net
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+  # ---------------------------------------------------------------------------
+  # Redis 7 - Cache / message broker for Celery result backend
+  # ---------------------------------------------------------------------------
+  redis:
+    image: redis:7.4.2
+    container_name: paismart-redis
+    restart: unless-stopped
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD:?err}
+    command:
+      - redis-server
+      - --requirepass ${REDIS_PASSWORD}
+      - --appendonly yes
+      - --appendfsync everysec
+    volumes:
+      - redis_data:/data
+    networks:
+      - paismart-net
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli -a $REDIS_PASSWORD ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  # ---------------------------------------------------------------------------
+  # MinIO - S3-compatible object storage (file / chunk storage)
+  # ---------------------------------------------------------------------------
+  minio:
+    image: minio/minio:latest
+    container_name: paismart-minio
+    restart: unless-stopped
+    ports:
+      - "19000:9000"   # API (host:container)
+      - "19002:9001"   # Console
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:?err}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:?err}
+    volumes:
+      - minio_data:/data
+    networks:
+      - paismart-net
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+
+  # ---------------------------------------------------------------------------
+  # Elasticsearch 8.10 - Full-text search with IK Chinese analyzer
+  # ---------------------------------------------------------------------------
+  elasticsearch:
+    build:
+      context: ./docker/elasticsearch
+      dockerfile: Dockerfile
+    image: paismart-elasticsearch:8.10.4
+    container_name: paismart-es
+    restart: unless-stopped
+    environment:
+      - cluster.name=paismart-cluster
+      - node.name=paismart-es-node
+      - discovery.type=single-node
+      - xpack.security.enabled=false
+      - xpack.security.enrollment.enabled=false
+      - ES_JAVA_OPTS=-Xms2g -Xmx2g
+      - bootstrap.memory_lock=true
+    ulimits:
+      memlock:
+        soft: -1
+        hard: -1
+      nofile:
+        soft: 65536
+        hard: 65536
+    volumes:
+      - es_data:/usr/share/elasticsearch/data
+    networks:
+      - paismart-net
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:9200/_cluster/health || exit 1"]
+      interval: 15s
+      timeout: 10s
+      retries: 10
+      start_period: 60s
+
+  # ---------------------------------------------------------------------------
+  # RabbitMQ 3 - Message broker for Celery task queue
+  # ---------------------------------------------------------------------------
+  rabbitmq:
+    image: rabbitmq:3.13-management
+    container_name: paismart-rabbitmq
+    restart: unless-stopped
+    environment:
+      RABBITMQ_DEFAULT_USER: ${RABBITMQ_USER:-paismart}
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASSWORD:?err}
+      RABBITMQ_DEFAULT_VHOST: ${RABBITMQ_VHOST:-paismart}
+    volumes:
+      - rabbitmq_data:/var/lib/rabbitmq
+    networks:
+      - paismart-net
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "check_running", "-q"]
+      interval: 15s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+
+  # ---------------------------------------------------------------------------
+  # Milvus 2.3 - Vector database (standalone mode with embedded etcd)
+  # ---------------------------------------------------------------------------
+  # NOTE: Uses embedded etcd (not a separate etcd service) for Windows Docker
+  # Desktop compatibility. This is the recommended setup for dev/standalone use.
+  # For production cluster: remove the `standalone` command and add a separate
+  # etcd service + set ETCD_ENDPOINTS.
+  # ---------------------------------------------------------------------------
+  # Celery Worker - Async task processing (document parsing, embeddings)
+  # ---------------------------------------------------------------------------
+  celery-worker:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    image: paismart-backend
+    container_name: paismart-celery-worker
+    restart: unless-stopped
+    command: celery -A app.tasks.celery_app worker -l info -Q documents,embeddings
+    environment:
+      MYSQL_HOST: mysql
+      REDIS_HOST: redis
+      RABBITMQ_HOST: rabbitmq
+      MINIO_ENDPOINT: minio:9000
+      ELASTICSEARCH_HOST: elasticsearch
+      MILVUS_HOST: milvus-standalone
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:?err}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:?err}
+      REDIS_PASSWORD: ${REDIS_PASSWORD:?err}
+      RABBITMQ_PASSWORD: ${RABBITMQ_PASSWORD:?err}
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:?err}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:?err}
+    volumes:
+      - ./backend:/app
+    networks:
+      - paismart-net
+    depends_on:
+      minio:
+        condition: service_started
+      rabbitmq:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      mysql:
+        condition: service_healthy
+
+  milvus:
+    image: milvusdb/milvus:v2.4.1
+    container_name: paismart-milvus
+    restart: unless-stopped
+    command: ["milvus", "run", "standalone"]
+    environment:
+      - ETCD_USE_EMBED=true
+      - ETCD_DATA_DIR=/var/lib/milvus/etcd
+      - COMMON_STORAGETYPE=local
+      - MINIO_ADDRESS=minio:9000
+      - MINIO_ACCESS_KEY=${MINIO_ROOT_USER:?err}
+      - MINIO_SECRET_KEY=${MINIO_ROOT_PASSWORD:?err}
+      - MINIO_BUCKET_NAME=${MILVUS_BUCKET_NAME:-paismart-milvus}
+      - common.security.authorizationEnabled=false
+    volumes:
+      - milvus_data:/var/lib/milvus
+    networks:
+      - paismart-net
+    depends_on:
+      minio:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9091/health"]
+      interval: 15s
+      timeout: 10s
+      retries: 10
+      start_period: 120s
