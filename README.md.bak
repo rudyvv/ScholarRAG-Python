@@ -164,6 +164,50 @@ BGE-reranker-v2-m3 Cross-Encoder 重排序
 - 支持普通用户与管理员角色，管理员可管理用户、邀请码和平台统计数据。
 - 文档支持组织标签和公开状态，普通用户默认访问自己的文档及符合规则的公开文档。
 - 支持模型供应商配置，API Key 加密存储，并可测试模型服务连通性。
+
+---
+
+## 技术栈
+
+### 后端
+
+| 技术 | 用途 |
+|------|------|
+| Python 3.11 | 后端运行时 |
+| FastAPI | 异步 Web 框架 |
+| SQLAlchemy 2.0 | ORM 与数据库访问 |
+| Alembic | 数据库迁移 |
+| MySQL 8 | 用户、文档、会话等关系数据存储 |
+| Redis 7 | 上传状态、缓存、限流支撑 |
+| Celery | 异步任务队列 |
+| RabbitMQ | Celery 消息代理 |
+| MinIO | S3 兼容对象存储 |
+| Elasticsearch 8 | 全文检索 |
+| Milvus 2.4 | 向量数据库 |
+| LangChain | 文档加载与通用文本分块能力 |
+| httpx | 异步模型服务调用 |
+
+### 前端
+
+| 技术 | 用途 |
+|------|------|
+| Vue 3 | 前端框架 |
+| TypeScript | 类型安全 |
+| Vite | 开发与构建工具 |
+| Naive UI | UI 组件库 |
+| Pinia | 状态管理 |
+| UnoCSS | 原子化 CSS |
+| markdown-it / highlight.js | Markdown 渲染与代码高亮 |
+
+### AI 模型
+
+| 模型/服务 | 用途 |
+|-----------|------|
+| Qwen3-8B | 问答生成与意图判断 |
+| BGE-M3 | 文本向量化 |
+| BGE-reranker-v2-m3 | 检索结果重排序 |
+| SiliconFlow API | OpenAI 兼容模型接口 |
+
 ---
 
 ## 快速开始
