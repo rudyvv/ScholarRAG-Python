@@ -12,9 +12,8 @@
   <img src="https://img.shields.io/badge/Python-3.11-3776AB?logo=python" alt="Python 3.11"/>
   <img src="https://img.shields.io/badge/FastAPI-0.115-009688?logo=fastapi" alt="FastAPI"/>
   <img src="https://img.shields.io/badge/Vue_3-4FC08D?logo=vuedotjs" alt="Vue 3"/>
-  <img src="https://img.shields.io/badge/Celery-37814A?logo=celery" alt="Celery"/>
+  <img src="https://img.shields.io/badge/Apache_Kafka-231F20?logo=apachekafka" alt="Apache Kafka"/>
   <img src="https://img.shields.io/badge/Elasticsearch-8-005571?logo=elasticsearch" alt="Elasticsearch 8"/>
-  <img src="https://img.shields.io/badge/Milvus-2.4-00A1EA?logo=milvus" alt="Milvus 2.4"/>
 </p>
 
 ---
@@ -32,9 +31,9 @@
 
 ## 项目简介
 
-**ScholarRAG** 是一个面向高校实验室场景的多租户 RAG 智能知识库平台。平台支持上传论文、项目资料、实验报告、课题文档等非结构化资料，构建实验室私域知识库，实现从 **文档上传 -> 文档解析 -> 文本分块 -> 向量化 -> 混合检索 -> 大模型生成** 的完整 RAG 流程。
+**ScholarRAG** 是一个面向高校实验室场景的多租户 RAG 智能知识库平台。平台支持上传论文、项目资料、实验报告、课题文档等非结构化资料，构建实验室私域知识库，实现从 **文档上传 -> 文档解析 -> 文本分块 -> 向量化 -> ANN 向量召回 -> BM25 重打分 -> 大模型生成** 的完整 RAG 流程。
 
-平台围绕实验室常见的知识管理与科研问答需求设计，支持多格式资料解析、异步文档处理、关键词与语义双路检索、Cross-Encoder 重排序、基于来源片段的问答生成、多轮会话上下文管理以及组织标签维度的数据访问控制。
+平台围绕实验室常见的知识管理与科研问答需求设计，支持多格式资料解析、异步文档处理、ANN 向量粗召回、BM25 重打分、BGE-Reranker-V2-M3 重排序、基于来源片段的问答生成、多轮会话上下文管理以及组织标签维度的数据访问控制。
 
 ### 核心能力
 
@@ -42,9 +41,9 @@
 |------|------|
 | 多格式文档解析 | 支持 PDF、DOCX、XLSX、PPTX、CSV、Markdown、文本及多种代码文件解析 |
 | 自适应文本分块 | 针对 Markdown、代码、PDF、通用文本采用不同分块策略，保留片段元数据 |
-| 混合检索 | Elasticsearch BM25 全文检索 + Milvus 向量检索 + RRF 融合 + Cross-Encoder 重排序 |
+| 检索与重排序 | Elasticsearch ANN 向量粗召回 + BM25 重打分 + BGE-Reranker-V2-M3 重排序 |
 | RAG 智能问答 | 基于 Function Calling 思路进行意图识别、查询改写和检索增强生成 |
-| 异步文档处理 | Celery + RabbitMQ 处理解析、分块、索引构建和向量入库任务 |
+| 异步文档处理 | Kafka 处理解析、分块、索引构建和向量入库任务 |
 | 多租户管理 | JWT 认证、组织标签、文档公开状态与后台用户管理 |
 | 流式交互体验 | 基于 SSE 实现回答流式输出，并展示引用来源片段 |
 
@@ -63,30 +62,26 @@
 │                    FastAPI 服务层                        │
 ├───────────┬──────────┬──────────┬───────────────────────┤
 │  Auth API │  Doc API │ Search   │ Chat / Ask Stream     │
-│  认证鉴权 │ 文档管理 │ 混合检索 │ RAG 问答与流式输出     │
+│  认证鉴权 │ 文档管理 │ 检索重排 │ RAG 问答与流式输出     │
 └───────────┴──────────┴──────────┴───────────────────────┘
              │            │                  │
     ┌────────┴────────┐  │      ┌───────────┴───────────┐
     │  MySQL 8.0      │  │      │   OpenAI 兼容模型服务  │
     │  用户/文档/会话  │  │      ├───────────────────────┤
-    └─────────────────┘  │      │  Qwen3-8B Chat         │
+    └─────────────────┘  │      │  DeepSeek-chat          │
     ┌─────────────────┐  │      │  BGE-M3 Embedding      │
-    │  Redis 7        │  │      │  BGE Reranker          │
+    │  Redis 7        │  │      │  BGE-Reranker-V2-M3    │
     │  上传状态/缓存   │  │      └───────────────────────┘
     └─────────────────┘  │
     ┌─────────────────┐  │       ┌──────────────────────┐
-    │  MinIO          │  │       │  Celery Worker       │
+    │  MinIO          │  │       │  Kafka Consumer       │
     │  原始文件存储    │  │       │  文档解析/向量化      │
     └─────────────────┘  │       └──────┬───────────────┘
-                         │              │ RabbitMQ
+                         │              │ Kafka
     ┌─────────────────┐  │              │
     │ Elasticsearch 8 │◄─┘              │
-    │ BM25 + IK 分词  │                 │
+    │ ANN + BM25      │                 │
     └─────────────────┘                 │
-    ┌─────────────────┐                 │
-    │ Milvus 2.4      │◄────────────────┘
-    │ IVF_FLAT + IP   │
-    └─────────────────┘
 ```
 
 ### RAG 问答流程
@@ -100,11 +95,11 @@ LLM Function Calling 判断是否需要检索知识库
   ↓
 需要检索时结合历史对话进行查询改写
   ↓
-Elasticsearch BM25 关键词召回 + Milvus 向量语义召回
+Elasticsearch ANN 向量粗召回
   ↓
-RRF 融合双路结果
+BM25 重打分
   ↓
-BGE-reranker-v2-m3 Cross-Encoder 重排序
+BGE-Reranker-V2-M3 重排序
   ↓
 构造带来源片段的 Prompt
   ↓
@@ -120,7 +115,7 @@ BGE-reranker-v2-m3 Cross-Encoder 重排序
 - 基于 MinIO Multipart Upload 实现文件分片上传，分片大小默认为 5 MiB。
 - 使用 Redis 记录上传会话、已接收分片和分片 ETag，支持上传进度查询与断点续传。
 - 上传完成后创建文档记录，并投递异步任务进行解析、分块、全文索引构建和向量入库。
-- Celery Worker 使用独立队列处理文档解析与向量化任务，避免长耗时流程阻塞接口响应。
+- Kafka Consumer 使用独立消费组处理文档解析与向量化任务，避免长耗时流程阻塞接口响应。
 
 ### 多格式文档解析与自适应分块
 
@@ -137,17 +132,16 @@ BGE-reranker-v2-m3 Cross-Encoder 重排序
 
 每个片段会保留文件类型、字符数、语言提示、片段序号和分块策略等元数据，便于后续检索、展示和来源追溯。
 
-### 混合检索与重排序
+### 检索与重排序
 
-- **全文检索**：基于 Elasticsearch 8 和 IK 中文分词构建文档片段索引，使用 BM25 进行关键词召回。
-- **向量检索**：基于 BGE-M3 生成 1024 维文本向量，写入 Milvus，使用 IVF_FLAT + IP 进行近似最近邻检索。
-- **结果融合**：使用 RRF 对关键词召回与向量召回结果进行融合，减少单一路径检索偏差。
-- **语义重排序**：调用 BGE-reranker-v2-m3 Cross-Encoder 对候选片段重新打分，筛选更适合进入生成上下文的 Top 片段。
+- **向量粗召回**：基于 BGE-M3 生成 1024 维文本向量，并写入 Elasticsearch 8 的 `dense_vector` 字段；使用 ANN（HNSW）在同一索引中完成近似最近邻粗召回。
+- **BM25 重打分**：候选片段经 Elasticsearch 8 与 IK 中文分词提供的 BM25 分数重打分，兼顾语义相近性与关键词精确匹配。
+- **语义重排序**：调用 BGE-Reranker-V2-M3 对候选片段进行最终重排序，筛选更适合进入生成上下文的 Top 片段。
 
 ### Agent 化 RAG 编排
 
 - 将知识库检索封装为大模型可调用工具，由模型先判断当前问题是普通闲聊还是知识库问题。
-- 知识库相关问题自动触发查询改写、混合检索、重排序和检索增强生成。
+- 知识库相关问题自动触发查询改写、ANN 向量召回、BM25 重打分、重排序和检索增强生成。
 - 普通问题直接返回模型回复，减少不必要的检索调用。
 - 查询改写会结合最近会话历史，补全指代词和省略主题，提升多轮追问场景下的召回质量。
 
@@ -188,9 +182,9 @@ cp .env.example .env
 make up
 ```
 
-该命令会启动 MySQL、Redis、MinIO、Elasticsearch、RabbitMQ、Milvus 和 Celery Worker 等依赖服务。
+该命令会启动 MySQL、Redis、MinIO、Elasticsearch、Kafka 和 Kafka Consumer 等依赖服务。
 
-### 3. 初始化数据库与向量集合
+### 3. 初始化数据库与 Elasticsearch 索引
 
 ```bash
 make init
@@ -232,8 +226,8 @@ ScholarRAG/
 │   │   ├── db/               # 数据库连接与会话
 │   │   ├── models/           # SQLAlchemy ORM 模型
 │   │   ├── schemas/          # Pydantic 请求/响应模型
-│   │   ├── services/         # 文档、检索、RAG、向量库、存储等业务逻辑
-│   │   ├── tasks/            # Celery 异步任务
+│   │   ├── services/         # 文档、检索、RAG、Elasticsearch 索引、存储等业务逻辑
+│   │   ├── tasks/            # Kafka 消费与异步任务
 │   │   └── main.py           # FastAPI 应用入口
 │   ├── alembic/              # 数据库迁移
 │   └── tests/                # 后端测试
@@ -262,7 +256,7 @@ ScholarRAG/
 ```bash
 make up         # 启动基础设施
 make down       # 停止基础设施
-make init       # 初始化数据库和 Milvus
+make init       # 初始化数据库和 Elasticsearch 索引
 make migrate    # 执行数据库迁移
 make test       # 运行后端测试
 ```
